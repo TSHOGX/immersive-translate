@@ -248,8 +248,12 @@
   }
 
   function storageArea() {
-    var runtime = extensionRuntime();
-    return (runtime && runtime.storage && runtime.storage.local) || null;
+    try {
+      var runtime = extensionRuntime();
+      return (runtime && runtime.storage && runtime.storage.local) || null;
+    } catch (error) {
+      return null;
+    }
   }
 
   function isExtensionDocument() {
@@ -893,13 +897,15 @@
     scheduleMount();
   }
 
-  if (isExtensionDocument()) {
-    installStoragePreserve();
-    installSubscriptionRemoval();
-    if (isOptionsDocument()) installShortcutSettings();
-    migrateSwitchCommand();
-  } else {
-    installSubscriptionRemoval();
-    migrateSwitchCommand();
-  }
+  try {
+    if (isExtensionDocument()) {
+      installStoragePreserve();
+      installSubscriptionRemoval();
+      if (isOptionsDocument()) installShortcutSettings();
+      migrateSwitchCommand();
+    } else {
+      installSubscriptionRemoval();
+      migrateSwitchCommand();
+    }
+  } catch (error) {}
 })(typeof globalThis !== "undefined" ? globalThis : this);

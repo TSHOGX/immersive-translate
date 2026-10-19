@@ -306,16 +306,17 @@ for (const file of listed) {
 }
 assert.ok(loaded.has("content_main.js"), "content guard loads content_main.js");
 const dispatcherText = fs.readFileSync(new URL("../dist/chrome/content_main.js", import.meta.url), "utf8");
-const keydownAt = dispatcherText.indexOf('document.addEventListener("keydown"');
-assert.ok(keydownAt > 0, "document keydown dispatcher exists");
-assert.ok(dispatcherText.includes("forkSwitchTranslationService"), "dispatcher file reads forkSwitchTranslationService");
-assert.ok(dispatcherText.includes("toggleActiveService"), "dispatcher file performs the toggle");
+assert.match(dispatcherText, /SSe\(\{changeToEngine:/);
+assert.match(dispatcherText, /loginSuccessUpdateUser:/);
+assert.match(dispatcherText, /onlyUpdateUser:/);
+assert.match(dispatcherText, /changeToSuccessFreeEngine:/);
+assert.match(dispatcherText, /if\(!sz\.changeToEngine/);
+const shortcutHandler = dispatcherText.slice(dispatcherText.indexOf("async function vFS()"), dispatcherText.indexOf("function _$e("));
+assert.match(shortcutHandler, /za\("changeToEngine"\)/);
+assert.match(shortcutHandler, /toggleActiveService/);
+assert.match(shortcutHandler, /context invalidated/);
+assert.equal(shortcutHandler.includes("mn("), false);
 const dispatchFn = dispatcherText.slice(dispatcherText.indexOf("function _$e("), dispatcherText.indexOf("function R$e("));
 assert.match(dispatchFn, /command==="forkSwitchTranslationService"\)return vFS\(\)/);
-assert.equal(dispatchFn.includes("Me("), true);
-assert.ok(dispatchFn.indexOf("forkSwitchTranslationService") < dispatchFn.indexOf("Me("));
-assert.match(dispatcherText, /function vFS\(\)\{[\s\S]*toggleActiveService/);
-assert.match(dispatcherText, /context invalidated/);
-assert.match(dispatcherText, /function Dhe\(e\)\{[\s\S]*forkSwitchTranslationService/);
 
 console.log("manifest dispatcher wiring passed");
