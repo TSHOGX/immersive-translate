@@ -41,6 +41,7 @@
         "*://*/*"
       ],
       "js": [
+        "fork-extras.js",
         "content_guard.js"
       ],
       "run_at": "document_start",
