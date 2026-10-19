@@ -302,9 +302,15 @@
     }, 2200);
   }
 
-  function announceSwitch(name, lang) {
-    var message = switchConfirmation(name, lang || (document.documentElement && document.documentElement.lang) || "");
+  function announceSwitch(name, lang, options) {
+    var resolved = lang || (document.documentElement && document.documentElement.lang) || "";
+    var message = switchConfirmation(name, resolved);
     if (!message) return;
+    if (options && options.invalidated) {
+      message += String(resolved).toLowerCase().indexOf("zh") === 0
+        ? "。请刷新页面一次，才会保存。"
+        : ". Refresh the page once to save it.";
+    }
     var previous = document.getElementById("imt-fork-switch-toast");
     if (previous) previous.remove();
     var toast = document.createElement("div");

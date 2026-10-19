@@ -293,3 +293,29 @@ const statusText = JSON.stringify(ui.parent, (key, value) => key === "parentElem
 assert.equal(statusText.includes("已启用"), false);
 
 console.log("shortcut recorder capture passed");
+
+const manifest = JSON.parse(fs.readFileSync(new URL("../dist/chrome/manifest.json", import.meta.url), "utf8"));
+const listed = manifest.content_scripts.flatMap((entry) => entry.js || []);
+const loaded = new Set(listed);
+for (const file of listed) {
+  const text = fs.readFileSync(new URL("../dist/chrome/" + file, import.meta.url), "utf8");
+  for (const match of text.matchAll(/["']([^"']+\.js)["']/g)) {
+    if (match[1].includes("..")) continue;
+    loaded.add(match[1].split("/").pop());
+  }
+}
+assert.ok(loaded.has("content_main.js"), "content guard loads content_main.js");
+const dispatcherText = fs.readFileSync(new URL("../dist/chrome/content_main.js", import.meta.url), "utf8");
+const keydownAt = dispatcherText.indexOf('document.addEventListener("keydown"');
+assert.ok(keydownAt > 0, "document keydown dispatcher exists");
+assert.ok(dispatcherText.includes("forkSwitchTranslationService"), "dispatcher file reads forkSwitchTranslationService");
+assert.ok(dispatcherText.includes("toggleActiveService"), "dispatcher file performs the toggle");
+const dispatchFn = dispatcherText.slice(dispatcherText.indexOf("function _$e("), dispatcherText.indexOf("function R$e("));
+assert.match(dispatchFn, /command==="forkSwitchTranslationService"\)return vFS\(\)/);
+assert.equal(dispatchFn.includes("Me("), true);
+assert.ok(dispatchFn.indexOf("forkSwitchTranslationService") < dispatchFn.indexOf("Me("));
+assert.match(dispatcherText, /function vFS\(\)\{[\s\S]*toggleActiveService/);
+assert.match(dispatcherText, /context invalidated/);
+assert.match(dispatcherText, /function Dhe\(e\)\{[\s\S]*forkSwitchTranslationService/);
+
+console.log("manifest dispatcher wiring passed");
