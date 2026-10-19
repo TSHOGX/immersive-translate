@@ -558,37 +558,6 @@
     return group ? id + " · " + group : id;
   }
 
-  function sendSwitch(userConfig) {
-    var runtime = extensionRuntime();
-    var messenger = runtime && runtime.runtime;
-    if (!messenger || typeof messenger.sendMessage !== "function") return Promise.resolve(false);
-    var message = {
-      to: "background:main",
-      from: "content:fork",
-      payload: {
-        method: "forkSwitchTranslationService",
-        data: { userConfig: userConfig },
-      },
-    };
-    try {
-      var result = messenger.sendMessage(message);
-      if (result && typeof result.then === "function") {
-        return result.then(function () { return true; }, function () { return false; });
-      }
-    } catch (error) {
-      return Promise.resolve(false);
-    }
-    return new Promise(function (resolve) {
-      try {
-        messenger.sendMessage(message, function () {
-          resolve(!(messenger.lastError));
-        });
-      } catch (error) {
-        resolve(false);
-      }
-    });
-  }
-
   function migrateSwitchCommand() {
     readUserConfig().then(function (config) {
       var setting = config && config.serviceSwitch;
@@ -599,13 +568,6 @@
       if (current === normalized) return;
       return writeUserConfig(applyServiceSwitch(config, setting));
     }).catch(function () {});
-  }
-
-  function deliverSwitch(userConfig) {
-    sendSwitch(userConfig).then(function (ok) {
-      if (!ok) writeUserConfig(userConfig);
-    });
-    root.setTimeout(function () { sendSwitch(userConfig); }, 600);
   }
 
   function fillSelect(select, catalog, selected, unsetLabel) {

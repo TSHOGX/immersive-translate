@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import vm from "node:vm";
 
@@ -315,8 +316,146 @@ const shortcutHandler = dispatcherText.slice(dispatcherText.indexOf("async funct
 assert.match(shortcutHandler, /za\("changeToEngine"\)/);
 assert.match(shortcutHandler, /toggleActiveService/);
 assert.match(shortcutHandler, /context invalidated/);
+assert.match(shortcutHandler, /userConfig:next/);
 assert.equal(shortcutHandler.includes("mn("), false);
+assert.equal(shortcutHandler.includes("Me("), false);
+assert.equal(shortcutHandler.includes("sendMessage"), false);
+assert.equal(shortcutHandler.includes("chrome.runtime.reload"), false);
+assert.equal(shortcutHandler.includes("browser.runtime.reload"), false);
+const engineFn = dispatcherText.slice(dispatcherText.indexOf("async function y9e("), dispatcherText.indexOf("async function Cg("));
+const internalEngine = engineFn.slice(0, engineFn.indexOf("let o=await Ht()"));
+assert.match(internalEngine, /fullLocalUserConfig/);
+assert.equal(internalEngine.includes("mn("), false);
+assert.equal(internalEngine.includes("Ht("), false);
+assert.equal(internalEngine.includes("Me("), false);
+assert.equal(engineFn.includes("chrome.runtime.reload"), false);
 const dispatchFn = dispatcherText.slice(dispatcherText.indexOf("function _$e("), dispatcherText.indexOf("function R$e("));
 assert.match(dispatchFn, /command==="forkSwitchTranslationService"\)return vFS\(\)/);
+
+const backgroundText = fs.readFileSync(new URL("../dist/chrome/background.js", import.meta.url), "utf8");
+const guardText = fs.readFileSync(new URL("../dist/chrome/content_guard.js", import.meta.url), "utf8");
+for (const [label, source] of [
+  ["shortcut", shortcutHandler],
+  ["changeToEngine", engineFn],
+  ["fork-extras", code],
+  ["background", backgroundText],
+  ["content_guard", guardText],
+  ["content_main", dispatcherText],
+]) {
+  assert.equal(source.includes("chrome.runtime.reload"), false, label + " reloads the extension");
+  assert.equal(source.includes("browser.runtime.reload"), false, label + " reloads the extension");
+}
+assert.equal(backgroundText.includes("forkSwitchTranslationService"), false, "background must not forward the shortcut");
+assert.equal(code.includes("sendMessage"), false, "fork startup must not message the background");
+
+for (const file of ["background.js", "content_main.js", "content_guard.js", "fork-extras.js"]) {
+  const checked = spawnSync(process.execPath, ["--check", new URL("../dist/chrome/" + file, import.meta.url).pathname], { encoding: "utf8" });
+  assert.equal(checked.status, 0, file + " fails to parse: " + checked.stderr);
+}
+
+const startupCalls = { reload: 0 };
+const startup = {
+  console,
+  document: {
+    documentElement: { lang: "zh-CN", appendChild() {} },
+    head: { appendChild() {} },
+    body: null,
+    createElement() { return { setAttribute() {}, textContent: "", style: {} }; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    addEventListener() {},
+  },
+  location: { protocol: "https:", pathname: "/", hash: "" },
+  MutationObserver: class { observe() {} disconnect() {} },
+  chrome: {
+    runtime: {
+      id: "startup-test",
+      reload() { startupCalls.reload += 1; throw new Error("chrome.runtime.reload"); },
+      getURL() { return ""; },
+    },
+    storage: {
+      local: {
+        get() { return Promise.resolve({ fullLocalUserConfig: {} }); },
+        set() { return Promise.resolve(); },
+      },
+    },
+  },
+};
+startup.window = startup;
+startup.globalThis = startup;
+vm.createContext(startup);
+vm.runInContext(code, startup, { filename: "fork-extras.js" });
+assert.equal(startupCalls.reload, 0, "startup called chrome.runtime.reload");
+
+const calls = { engine: 0, reload: 0, send: 0, saved: null };
+const shortcutSandbox = {
+  console,
+  ImmersiveFork: fork,
+  calls,
+  chrome: {
+    runtime: {
+      id: "alive",
+      reload() { calls.reload += 1; },
+      sendMessage() { calls.send += 1; return Promise.resolve(); },
+    },
+    storage: { local: { set(items) { calls.saved = items; return Promise.resolve(); } } },
+  },
+  Ke() {
+    return {
+      config: {
+        interfaceLanguage: "zh-CN",
+        translationServices: {
+          "bing-free": { type: "bing", group: "free" },
+          custom: { type: "custom", name: "My API" },
+        },
+        rawUserConfig: shortcutSandbox.raw,
+      },
+      translationService: "deepl",
+      state: {},
+    };
+  },
+  sz: { changeToEngine: true },
+  Lpt() { throw new Error("startup registration threw"); },
+  za(name) {
+    return async function (ctx, event) {
+      calls.engine += 1;
+      assert.equal(name, "changeToEngine");
+      const detail = event.detail;
+      assert.equal(detail.internal, true);
+      if (!detail.userConfig) return;
+      await shortcutSandbox.chrome.storage.local.set({ fullLocalUserConfig: detail.userConfig });
+    };
+  },
+};
+shortcutSandbox.globalThis = shortcutSandbox;
+shortcutSandbox.raw = { serviceSwitch: { shortcut: "", serviceA: "bing-free", serviceB: "custom" } };
+vm.createContext(shortcutSandbox);
+vm.runInContext(shortcutHandler + "\nglobalThis.__vFS = vFS;", shortcutSandbox, { filename: "vFS.js" });
+await shortcutSandbox.__vFS();
+assert.equal(calls.engine, 0, "incomplete settings must not switch");
+assert.equal(calls.reload, 0);
+assert.equal(calls.send, 0);
+assert.equal(calls.saved, null);
+
+shortcutSandbox.raw = {
+  translationService: "deepl",
+  serviceSwitch: { shortcut: "Alt+S", serviceA: "bing-free", serviceB: "custom" },
+};
+await shortcutSandbox.__vFS();
+assert.equal(calls.engine, 1);
+assert.equal(calls.reload, 0);
+assert.equal(calls.send, 0);
+assert.equal(calls.saved.fullLocalUserConfig.userTranslationServices.translationService, "custom");
+
+shortcutSandbox.chrome.runtime = {
+  get id() { throw new Error("Extension context invalidated."); },
+  reload() { calls.reload += 1; },
+  sendMessage() { calls.send += 1; },
+};
+const before = calls.engine;
+await shortcutSandbox.__vFS();
+assert.equal(calls.engine, before, "invalid runtime must not call changeToEngine");
+assert.equal(calls.reload, 0);
+assert.equal(calls.send, 0);
 
 console.log("manifest dispatcher wiring passed");
