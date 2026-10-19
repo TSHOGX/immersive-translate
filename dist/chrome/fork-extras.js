@@ -42,7 +42,8 @@
         if (modifiers.indexOf(alias) === -1) modifiers.push(alias);
         continue;
       }
-      if (/^f([1-9]|1[0-9]|2[0-4])$/i.test(token)) key = token.toUpperCase();
+      if (/^f([1-9]|1[0-2])$/i.test(token)) key = token.toUpperCase();
+      else if (token.toLowerCase() === "space") key = "Space";
       else if (token.length === 1) key = token.toUpperCase();
       else return "";
     }
@@ -62,21 +63,72 @@
     );
   }
 
-  function eventToShortcut(event) {
-    if (!event) return "";
+  var CODE_KEYS = {
+    Minus: "-",
+    Equal: "=",
+    BracketLeft: "[",
+    BracketRight: "]",
+    Backslash: "\\",
+    Semicolon: ";",
+    Quote: "'",
+    Comma: ",",
+    Period: ".",
+    Slash: "/",
+    Backquote: "`",
+    Space: "Space",
+  };
+
+  function keyFromEvent(event) {
+    var code = event.code || "";
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+    if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+    if (/^F(?:[1-9]|1[0-2])$/.test(code)) return code;
+    if (CODE_KEYS[code]) return CODE_KEYS[code];
+    if (event.key && event.key.length === 1 && event.key !== " ") return event.key.toUpperCase();
+    return "";
+  }
+
+  function captureFromEvent(event) {
+    if (!event || event.repeat || event.isComposing || event.key === "AltGraph") {
+      return { type: "unsupported", value: "" };
+    }
     var modifiers = [];
     if (event.ctrlKey) modifiers.push("Ctrl");
     if (event.metaKey) modifiers.push("Command");
     if (event.altKey) modifiers.push("Alt");
     if (event.shiftKey) modifiers.push("Shift");
-    var key = "";
-    var code = event.code || "";
-    if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
-    else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
-    else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) key = code;
-    else if (event.key && event.key.length === 1) key = event.key.toUpperCase();
-    if (!key || MODIFIER_ORDER.indexOf(key) !== -1) return "";
-    return modifiers.concat(key).join("+");
+    var key = keyFromEvent(event);
+    if (!key || MODIFIER_ORDER.indexOf(key) !== -1) {
+      return { type: "modifier", value: modifiers.join("+") };
+    }
+    var value = normalizeShortcut(modifiers.concat(key).join("+"));
+    if (!isUsableShortcut(value)) return { type: "rejected", value: value };
+    return { type: "complete", value: value };
+  }
+
+  function eventToShortcut(event) {
+    var captured = captureFromEvent(event);
+    return captured.type === "complete" ? captured.value : "";
+  }
+
+  function eventMatchesShortcut(event, shortcut) {
+    var expected = normalizeShortcut(shortcut);
+    if (!isUsableShortcut(expected)) return false;
+    return eventToShortcut(event) === expected;
+  }
+
+  function switchConfirmation(name, lang) {
+    var label = String(name || "").trim();
+    if (!label) return "";
+    return String(lang || "").toLowerCase().indexOf("zh") === 0
+      ? "已切换到 " + label
+      : "Switched to " + label;
+  }
+
+  function serviceDisplayName(id, catalog) {
+    var service = catalog && catalog[id];
+    if (service && typeof service.name === "string" && service.name && service.name !== id) return service.name;
+    return String(id || "");
   }
 
   function shortcutSetting(config) {
@@ -139,7 +191,11 @@
     USER_CONFIG_KEY: USER_CONFIG_KEY,
     normalizeShortcut: normalizeShortcut,
     isUsableShortcut: isUsableShortcut,
+    captureFromEvent: captureFromEvent,
     eventToShortcut: eventToShortcut,
+    eventMatchesShortcut: eventMatchesShortcut,
+    switchConfirmation: switchConfirmation,
+    serviceDisplayName: serviceDisplayName,
     shortcutSetting: shortcutSetting,
     activeServiceId: activeServiceId,
     mergeServiceCatalog: mergeServiceCatalog,
@@ -195,6 +251,38 @@
     }
   }
 
+  function showSwitchConfirmation(name) {
+    var lang = (document.documentElement && document.documentElement.lang) || "";
+    var message = switchConfirmation(name, lang);
+    if (!message || !document.documentElement) return;
+    var previous = document.getElementById("imt-fork-switch-toast");
+    if (previous) previous.remove();
+    var toast = document.createElement("div");
+    toast.id = "imt-fork-switch-toast";
+    toast.setAttribute("role", "status");
+    toast.textContent = message;
+    toast.style.cssText = [
+      "all:initial",
+      "position:fixed",
+      "top:20px",
+      "left:50%",
+      "transform:translateX(-50%)",
+      "z-index:2147483647",
+      "pointer-events:none",
+      "box-sizing:border-box",
+      "background:#1f2328",
+      "color:#ffffff",
+      "font:600 14px/1.4 system-ui,-apple-system,sans-serif",
+      "padding:10px 14px",
+      "border-radius:8px",
+      "box-shadow:0 8px 24px rgba(0,0,0,.22)",
+    ].join(";");
+    document.documentElement.appendChild(toast);
+    root.setTimeout(function () {
+      if (toast.parentNode) toast.remove();
+    }, 2200);
+  }
+
   function uiText() {
     var lang = (document.documentElement && document.documentElement.lang) || "";
     if (lang.toLowerCase().indexOf("zh") === 0) {
@@ -203,6 +291,7 @@
         hint: "可选。快捷键和下面两个服务都设置后，才会在它们之间切换。留空时保持原来的行为。",
         shortcut: "快捷键",
         record: "点击后按下组合键",
+        capturing: "请按下快捷键",
         clear: "清除",
         serviceA: "服务 A",
         serviceB: "服务 B",
@@ -220,6 +309,7 @@
       hint: "Optional. The shortcut switches services only after it and both services are set. Leave them empty to keep the current behavior.",
       shortcut: "Shortcut",
       record: "Click, then press a shortcut",
+      capturing: "Press a shortcut",
       clear: "Clear",
       serviceA: "Service A",
       serviceB: "Service B",
@@ -470,19 +560,22 @@
       });
     }
     window.addEventListener("keydown", function (event) {
-      if (event.repeat || !cached || !cached.setting) return;
-      if (eventToShortcut(event) !== cached.setting.shortcut) return;
+      if (!cached || !cached.setting || !eventMatchesShortcut(event, cached.setting.shortcut)) return;
       if (Date.now() - lastToggleAt < 400) return;
       lastToggleAt = Date.now();
       event.preventDefault();
       event.stopPropagation();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
       var config = cached.config;
       loadCatalog(config).then(function (catalog) {
+        var setting = shortcutSetting(config);
+        if (!setting || !eventMatchesShortcut(event, setting.shortcut)) return;
         var next = toggleActiveService(config, catalog);
         if (!next) return;
         generation += 1;
         remember(next);
         deliverSwitch(next);
+        showSwitchConfirmation(serviceDisplayName(activeServiceId(next), catalog));
       }).catch(function () {});
     }, true);
   }
@@ -513,8 +606,9 @@
       "#imt-fork-service-switch h2{font-size:1.05rem;margin:0 0 6px;}",
       "#imt-fork-service-switch p{margin:0 0 8px;color:var(--muted-color,#57606a);font-size:.9rem;}",
       "#imt-fork-service-switch .imt-fork-row{display:flex;gap:12px;align-items:center;margin:8px 0;}",
-      "#imt-fork-service-switch label{min-width:7em;}",
-      "#imt-fork-service-switch select,#imt-fork-service-switch input{flex:1;margin:0;}",
+      "#imt-fork-service-switch .imt-fork-row > span{min-width:7em;}",
+      "#imt-fork-service-switch select{flex:1;margin:0;}",
+      "#imt-fork-service-switch .shortcut-recorder{flex:1;width:auto;max-width:none;}",
       "#imt-fork-service-switch .imt-fork-status{min-height:1.2em;}",
     ].join("");
     (document.head || document.documentElement).appendChild(style);
@@ -527,18 +621,23 @@
     var readyNote = null;
     var catalog = {};
     var mountedConfig = null;
+    var committedShortcut = "";
+    var capturing = false;
+    var captureListener = null;
 
     function refreshNote() {
       if (!readyNote) return;
       var text = uiText();
       var setting = shortcutSetting({
         serviceSwitch: {
-          shortcut: shortcutInput.value,
+          shortcut: committedShortcut,
           serviceA: serviceA.value,
           serviceB: serviceB.value,
         },
       });
       readyNote.textContent = setting ? text.ready : text.idle;
+      var clearButton = panel && panel.querySelector(".shortcut-recorder__clear");
+      if (clearButton) clearButton.disabled = !committedShortcut;
     }
 
     function save(partial, message) {
@@ -550,7 +649,12 @@
           config.serviceSwitch || {},
           partial
         );
-        if (serviceSwitch.shortcut) serviceSwitch.shortcut = normalizeShortcut(serviceSwitch.shortcut);
+        if (serviceSwitch.shortcut) {
+          serviceSwitch.shortcut = normalizeShortcut(serviceSwitch.shortcut);
+          if (!isUsableShortcut(serviceSwitch.shortcut)) serviceSwitch.shortcut = "";
+        }
+        committedShortcut = serviceSwitch.shortcut || "";
+        if (shortcutInput && !capturing) shortcutInput.value = committedShortcut;
         root.__imtForkHeldServiceSwitch = serviceSwitch;
         var next = Object.assign({}, config, { serviceSwitch: serviceSwitch });
         mountedConfig = next;
@@ -576,11 +680,24 @@
       hint.textContent = text.hint;
       readyNote = document.createElement("p");
       readyNote.className = "imt-fork-status";
+      var recorder = document.createElement("div");
+      recorder.className = "shortcut-recorder";
       shortcutInput = document.createElement("input");
       shortcutInput.type = "text";
+      shortcutInput.className = "shortcut-recorder__input";
       shortcutInput.readOnly = true;
+      shortcutInput.autocomplete = "off";
+      shortcutInput.spellcheck = false;
       shortcutInput.placeholder = text.record;
       shortcutInput.setAttribute("aria-label", text.shortcut);
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "shortcut-recorder__clear";
+      clear.title = text.clear;
+      clear.setAttribute("aria-label", text.clear);
+      clear.innerHTML = "<svg viewBox='0 0 16 16' aria-hidden='true'><path fill='currentColor' d='M4.2 3.5 8 7.3l3.8-3.8 1.2 1.2L9.2 8.5l3.8 3.8-1.2 1.2L8 9.7l-3.8 3.8-1.2-1.2 3.8-3.8-3.8-3.8z'/></svg>";
+      recorder.appendChild(shortcutInput);
+      recorder.appendChild(clear);
       serviceA = document.createElement("select");
       serviceA.setAttribute("aria-label", text.serviceA);
       serviceB = document.createElement("select");
@@ -589,40 +706,94 @@
       status.className = "imt-fork-status";
       status.setAttribute("role", "status");
 
-      function row(labelText, control, extra) {
+      function row(labelText, control) {
         var wrap = document.createElement("div");
         wrap.className = "imt-fork-row";
-        var label = document.createElement("label");
+        var label = document.createElement("span");
         label.textContent = labelText;
         wrap.appendChild(label);
         wrap.appendChild(control);
-        if (extra) wrap.appendChild(extra);
         return wrap;
       }
 
-      var clear = document.createElement("button");
-      clear.type = "button";
-      clear.textContent = text.clear;
+      function stopCapture(restore) {
+        capturing = false;
+        if (captureListener) {
+          window.removeEventListener("keydown", captureListener, true);
+          window.removeEventListener("keyup", captureListener, true);
+          captureListener = null;
+        }
+        shortcutInput.placeholder = uiText().record;
+        if (restore) shortcutInput.value = committedShortcut;
+      }
+
+      function onCaptureKey(event) {
+        if (!capturing) return;
+        if (event.type === "keyup") {
+          if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !isUsableShortcut(shortcutInput.value)) {
+            shortcutInput.value = committedShortcut;
+          }
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          stopCapture(true);
+          return;
+        }
+        if (event.key === "Backspace" || event.key === "Delete") {
+          stopCapture(false);
+          shortcutInput.value = "";
+          save({ shortcut: "" }, uiText().saved);
+          return;
+        }
+        var captured = captureFromEvent(event);
+        if (captured.type === "unsupported") return;
+        if (captured.type === "modifier") {
+          shortcutInput.value = captured.value;
+          return;
+        }
+        if (captured.type !== "complete") {
+          status.textContent = uiText().invalid;
+          shortcutInput.value = committedShortcut;
+          return;
+        }
+        stopCapture(false);
+        shortcutInput.value = captured.value;
+        save({ shortcut: captured.value }, uiText().saved);
+      }
+
+      var captureStartedAt = 0;
+      function startCapture(event) {
+        if (event) event.preventDefault();
+        captureStartedAt = Date.now();
+        shortcutInput.focus();
+        capturing = true;
+        shortcutInput.placeholder = uiText().capturing;
+        shortcutInput.value = "";
+        if (!captureListener) {
+          captureListener = onCaptureKey;
+          window.addEventListener("keydown", captureListener, true);
+          window.addEventListener("keyup", captureListener, true);
+        }
+      }
+
+      clear.addEventListener("mousedown", function (event) { event.preventDefault(); });
       clear.addEventListener("click", function () {
+        stopCapture(false);
         shortcutInput.value = "";
         save({ shortcut: "" }, text.saved);
       });
+      shortcutInput.addEventListener("click", startCapture);
       shortcutInput.addEventListener("keydown", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.key === "Escape" || event.key === "Backspace" || event.key === "Delete") {
-          shortcutInput.value = "";
-          save({ shortcut: "" }, text.saved);
+        if (!capturing && (event.key === "Enter" || event.key === " ")) startCapture(event);
+      });
+      shortcutInput.addEventListener("blur", function () {
+        if (Date.now() - captureStartedAt < 400) {
+          shortcutInput.focus();
           return;
         }
-        var combo = eventToShortcut(event);
-        if (!combo) return;
-        if (!isUsableShortcut(combo)) {
-          status.textContent = text.invalid;
-          return;
-        }
-        shortcutInput.value = combo;
-        save({ shortcut: combo }, text.saved);
+        stopCapture(true);
       });
       serviceA.addEventListener("change", function () {
         if (serviceA.value && serviceA.value === serviceB.value) {
@@ -642,7 +813,7 @@
       panel.appendChild(title);
       panel.appendChild(hint);
       panel.appendChild(readyNote);
-      panel.appendChild(row(text.shortcut, shortcutInput, clear));
+      panel.appendChild(row(text.shortcut, recorder));
       panel.appendChild(row(text.serviceA, serviceA));
       panel.appendChild(row(text.serviceB, serviceB));
       panel.appendChild(status);
@@ -652,7 +823,9 @@
 
     function applyConfig(config) {
       var setting = (config && config.serviceSwitch) || {};
-      shortcutInput.value = normalizeShortcut(setting.shortcut || "");
+      var stored = normalizeShortcut(setting.shortcut || "");
+      committedShortcut = isUsableShortcut(stored) ? stored : "";
+      if (!capturing) shortcutInput.value = committedShortcut;
       fillSelect(serviceA, catalog, setting.serviceA || "", uiText().unset);
       fillSelect(serviceB, catalog, setting.serviceB || "", uiText().unset);
       refreshNote();

@@ -14,10 +14,28 @@ assert.equal(fork.normalizeShortcut("alt + shift + s"), "Alt+Shift+S");
 assert.equal(fork.normalizeShortcut("ctrl+shift+Key"), "");
 assert.equal(fork.isUsableShortcut("Shift+A"), false);
 assert.equal(fork.isUsableShortcut("Alt+S"), true);
-assert.equal(
-  fork.eventToShortcut({ altKey: true, shiftKey: true, ctrlKey: false, metaKey: false, code: "KeyS", key: "s" }),
-  "Alt+Shift+S"
-);
+const altShiftS = { altKey: true, shiftKey: true, ctrlKey: false, metaKey: false, code: "KeyS", key: "s" };
+const capturedAltShiftS = fork.captureFromEvent(altShiftS);
+assert.equal(capturedAltShiftS.type, "complete");
+assert.equal(capturedAltShiftS.value, "Alt+Shift+S");
+assert.equal(fork.eventToShortcut(altShiftS), "Alt+Shift+S");
+assert.equal(fork.eventMatchesShortcut(altShiftS, "alt + shift + s"), true);
+assert.equal(fork.eventMatchesShortcut(altShiftS, ""), false);
+const bareKey = fork.captureFromEvent({ code: "KeyS", key: "s" });
+assert.equal(bareKey.type, "rejected");
+assert.equal(bareKey.value, "S");
+assert.equal(fork.eventToShortcut({ code: "KeyS", key: "s" }), "");
+assert.equal(fork.captureFromEvent({ altKey: true, code: "AltLeft", key: "Alt" }).type, "modifier");
+assert.equal(fork.captureFromEvent({ shiftKey: true, code: "KeyS", key: "S" }).type, "rejected");
+assert.equal(fork.shortcutSetting({
+  serviceSwitch: { shortcut: "", serviceA: "custom-ai-wX7esHRO", serviceB: "google-free" },
+}), null);
+assert.equal(fork.switchConfirmation("modelarts", "zh-CN"), "已切换到 modelarts");
+assert.equal(fork.switchConfirmation("google-free", "en"), "Switched to google-free");
+assert.equal(fork.switchConfirmation("", "zh-CN"), "");
+assert.equal(fork.serviceDisplayName("custom-ai-wX7esHRO", {
+  "custom-ai-wX7esHRO": { name: "modelarts", type: "custom-ai" },
+}), "modelarts");
 
 const catalog = fork.mergeServiceCatalog(
   {
@@ -76,3 +94,179 @@ const neither = fork.toggleActiveService({
 assert.equal(neither.userTranslationServices.translationService, "custom");
 
 console.log("service-switch tests passed");
+
+function createNode(tag) {
+  return {
+    tagName: String(tag).toUpperCase(),
+    children: [],
+    parentElement: null,
+    parentNode: null,
+    style: {},
+    className: "",
+    id: "",
+    value: "",
+    placeholder: "",
+    readOnly: false,
+    disabled: false,
+    autocomplete: "",
+    spellcheck: false,
+    type: "",
+    title: "",
+    textContent: "",
+    innerHTML: "",
+    listeners: {},
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value; },
+    appendChild(child) {
+      child.parentElement = this;
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    },
+    insertBefore(node, before) {
+      node.parentElement = this;
+      node.parentNode = this;
+      const index = this.children.indexOf(before);
+      if (index < 0) this.children.push(node);
+      else this.children.splice(index, 0, node);
+      return node;
+    },
+    remove() {
+      const parent = this.parentElement;
+      if (!parent) return;
+      parent.children = parent.children.filter((child) => child !== this);
+      this.parentElement = null;
+      this.parentNode = null;
+    },
+    addEventListener(type, fn) {
+      this.listeners[type] = this.listeners[type] || [];
+      this.listeners[type].push(fn);
+    },
+    removeEventListener(type, fn) {
+      this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== fn);
+    },
+    querySelector(selector) {
+      return findNode(this, selector);
+    },
+    querySelectorAll() { return []; },
+    closest(selector) {
+      if (selector === "article" && this.tagName === "ARTICLE") return this;
+      return this.parentElement ? this.parentElement.closest(selector) : null;
+    },
+    focus() {},
+  };
+}
+
+function findNode(node, selector) {
+  const className = selector.startsWith(".") ? selector.slice(1) : "";
+  if (className && String(node.className || "").split(/\s+/).includes(className)) return node;
+  for (const child of node.children || []) {
+    const found = findNode(child, selector);
+    if (found) return found;
+  }
+  return null;
+}
+
+const ui = {};
+ui.document = {
+  documentElement: createNode("html"),
+  head: createNode("head"),
+  body: createNode("body"),
+  createElement: createNode,
+  getElementById(id) {
+    return findById(ui.document.documentElement, id) || findById(ui.document.head, id) || findById(ui.document.body, id);
+  },
+  querySelector(selector) {
+    if (String(selector).includes("immersive-translate-options")) return { name: "meta" };
+    if (selector === ".shortcut-group-header") return ui.header;
+    return null;
+  },
+  querySelectorAll() { return []; },
+  addEventListener() {},
+};
+function findById(node, id) {
+  if (node.id === id) return node;
+  for (const child of node.children || []) {
+    const found = findById(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+ui.header = createNode("div");
+ui.header.className = "shortcut-group-header";
+ui.article = createNode("article");
+ui.parent = createNode("div");
+ui.parent.appendChild(ui.article);
+ui.article.appendChild(ui.header);
+ui.stored = {};
+const uiSandbox = {
+  console,
+  document: ui.document,
+  location: { protocol: "chrome-extension:", pathname: "/options.html", hash: "#shortcuts" },
+  MutationObserver: class { constructor() {} observe() {} disconnect() {} },
+  requestAnimationFrame(fn) { fn(); },
+  fetch() {
+    return Promise.resolve({
+      json: () => Promise.resolve({
+        translationServices: {
+          "google-free": { type: "google", group: "free" },
+          "custom-ai-wX7esHRO": { type: "custom-ai", name: "modelarts" },
+        },
+      }),
+    });
+  },
+  chrome: {
+    storage: {
+      local: {
+        get() { return Promise.resolve({ fullLocalUserConfig: ui.stored }); },
+        set(items) { ui.stored = items.fullLocalUserConfig; return Promise.resolve(); },
+      },
+      onChanged: { addListener() {} },
+    },
+    runtime: {
+      getURL() { return "default_config.json"; },
+      sendMessage() { return Promise.resolve(true); },
+    },
+  },
+};
+uiSandbox.listeners = {};
+uiSandbox.addEventListener = function (type, fn) {
+  this.listeners[type] = this.listeners[type] || [];
+  this.listeners[type].push(fn);
+};
+uiSandbox.removeEventListener = function (type, fn) {
+  this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== fn);
+};
+uiSandbox.window = uiSandbox;
+uiSandbox.globalThis = uiSandbox;
+uiSandbox.document.documentElement.lang = "zh-CN";
+vm.createContext(uiSandbox);
+vm.runInContext(code, uiSandbox, { filename: "fork-extras.js" });
+
+const input = findNode(ui.parent, ".shortcut-recorder__input");
+assert.ok(input, "shortcut field is on the shortcuts page");
+assert.equal(input.value, "");
+assert.ok(findNode(ui.parent, ".shortcut-recorder"), "uses the same recorder shell as the other shortcuts");
+for (const fn of input.listeners.click || []) fn({ preventDefault() {} });
+for (const fn of uiSandbox.listeners.keydown || []) {
+  fn({
+    type: "keydown",
+    key: "s",
+    code: "KeyS",
+    altKey: true,
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+}
+assert.equal(input.value, "Alt+Shift+S");
+for (let i = 0; i < 8; i += 1) await Promise.resolve();
+assert.equal(ui.stored.serviceSwitch.shortcut, "Alt+Shift+S");
+assert.equal(ui.stored.serviceSwitch.serviceA || "", "");
+assert.equal(fork.eventMatchesShortcut(altShiftS, ui.stored.serviceSwitch.shortcut), true);
+const statusText = JSON.stringify(ui.parent, (key, value) => key === "parentElement" || key === "parentNode" || key === "listeners" ? undefined : value);
+assert.equal(statusText.includes("已启用"), false);
+
+console.log("shortcut recorder capture passed");
