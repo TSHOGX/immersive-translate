@@ -93,6 +93,28 @@ const neither = fork.toggleActiveService({
 }, catalog);
 assert.equal(neither.userTranslationServices.translationService, "custom");
 
+const savedSwitch = fork.applyServiceSwitch({
+  shortcuts: { toggleTranslatePage: "Alt+A" },
+  translationService: "bing",
+}, {
+  shortcut: "Alt+Shift+S",
+  serviceA: "custom-ai-wX7esHRO",
+  serviceB: "google-free",
+});
+assert.equal(savedSwitch.shortcuts.forkSwitchTranslationService, "Alt+Shift+S");
+assert.equal(savedSwitch.shortcuts.toggleTranslatePage, "Alt+A");
+assert.equal(savedSwitch.serviceSwitch.serviceB, "google-free");
+assert.equal(fork.eventMatchesShortcut(altShiftS, savedSwitch.shortcuts.forkSwitchTranslationService), true);
+const switched = fork.toggleActiveService(savedSwitch, {
+  "custom-ai-wX7esHRO": { type: "custom-ai", name: "modelarts" },
+  "google-free": { type: "google", group: "free" },
+});
+assert.equal(switched.userTranslationServices.translationService, "google-free");
+assert.equal(switched.shortcuts.forkSwitchTranslationService, "Alt+Shift+S");
+const cleared = fork.applyServiceSwitch(savedSwitch, { shortcut: "", serviceA: "custom-ai-wX7esHRO", serviceB: "google-free" });
+assert.equal(Object.prototype.hasOwnProperty.call(cleared.shortcuts, "forkSwitchTranslationService"), false);
+assert.equal(fork.toggleActiveService(cleared, catalog), null);
+
 console.log("service-switch tests passed");
 
 function createNode(tag) {
@@ -264,6 +286,7 @@ for (const fn of uiSandbox.listeners.keydown || []) {
 assert.equal(input.value, "Alt+Shift+S");
 for (let i = 0; i < 8; i += 1) await Promise.resolve();
 assert.equal(ui.stored.serviceSwitch.shortcut, "Alt+Shift+S");
+assert.equal(ui.stored.shortcuts.forkSwitchTranslationService, "Alt+Shift+S");
 assert.equal(ui.stored.serviceSwitch.serviceA || "", "");
 assert.equal(fork.eventMatchesShortcut(altShiftS, ui.stored.serviceSwitch.shortcut), true);
 const statusText = JSON.stringify(ui.parent, (key, value) => key === "parentElement" || key === "parentNode" || key === "listeners" ? undefined : value);

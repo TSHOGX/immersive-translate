@@ -187,6 +187,23 @@
     return applyActiveService(config, catalog, target);
   }
 
+  var SWITCH_COMMAND = "forkSwitchTranslationService";
+
+  function applyServiceSwitch(config, serviceSwitch) {
+    var current = config && typeof config === "object" ? config : {};
+    var shortcut = serviceSwitch && serviceSwitch.shortcut ? normalizeShortcut(serviceSwitch.shortcut) : "";
+    if (!isUsableShortcut(shortcut)) shortcut = "";
+    var stored = {
+      shortcut: shortcut,
+      serviceA: String((serviceSwitch && serviceSwitch.serviceA) || "").trim(),
+      serviceB: String((serviceSwitch && serviceSwitch.serviceB) || "").trim(),
+    };
+    var shortcuts = Object.assign({}, current.shortcuts || {});
+    if (shortcut) shortcuts[SWITCH_COMMAND] = shortcut;
+    else delete shortcuts[SWITCH_COMMAND];
+    return Object.assign({}, current, { serviceSwitch: stored, shortcuts: shortcuts });
+  }
+
   var api = {
     USER_CONFIG_KEY: USER_CONFIG_KEY,
     normalizeShortcut: normalizeShortcut,
@@ -201,6 +218,8 @@
     mergeServiceCatalog: mergeServiceCatalog,
     applyActiveService: applyActiveService,
     toggleActiveService: toggleActiveService,
+    applyServiceSwitch: applyServiceSwitch,
+    SWITCH_COMMAND: SWITCH_COMMAND,
   };
   root.ImmersiveFork = api;
 
@@ -282,6 +301,38 @@
       if (toast.parentNode) toast.remove();
     }, 2200);
   }
+
+  function announceSwitch(name, lang) {
+    var message = switchConfirmation(name, lang || (document.documentElement && document.documentElement.lang) || "");
+    if (!message) return;
+    var previous = document.getElementById("imt-fork-switch-toast");
+    if (previous) previous.remove();
+    var toast = document.createElement("div");
+    toast.id = "imt-fork-switch-toast";
+    toast.setAttribute("role", "status");
+    toast.textContent = message;
+    toast.style.cssText = [
+      "all:initial",
+      "position:fixed",
+      "top:20px",
+      "left:50%",
+      "transform:translateX(-50%)",
+      "z-index:2147483647",
+      "pointer-events:none",
+      "box-sizing:border-box",
+      "background:#1f2328",
+      "color:#ffffff",
+      "font:600 14px/1.4 system-ui,-apple-system,sans-serif",
+      "padding:10px 14px",
+      "border-radius:8px",
+      "box-shadow:0 8px 24px rgba(0,0,0,.22)",
+    ].join(";");
+    document.documentElement.appendChild(toast);
+    root.setTimeout(function () {
+      if (toast.parentNode) toast.remove();
+    }, 2200);
+  }
+  root.ImmersiveFork.announceSwitch = announceSwitch;
 
   function uiText() {
     var lang = (document.documentElement && document.documentElement.lang) || "";
@@ -398,7 +449,7 @@
         var config = items[USER_CONFIG_KEY];
         if (config && typeof config === "object") {
           var next = {};
-          next[USER_CONFIG_KEY] = Object.assign({}, config, { serviceSwitch: held });
+          next[USER_CONFIG_KEY] = applyServiceSwitch(config, held);
           items = Object.assign({}, items, next);
         }
       }
@@ -528,56 +579,23 @@
     });
   }
 
+  function migrateSwitchCommand() {
+    readUserConfig().then(function (config) {
+      var setting = config && config.serviceSwitch;
+      if (!setting || !setting.shortcut) return;
+      var normalized = normalizeShortcut(setting.shortcut);
+      if (!isUsableShortcut(normalized)) return;
+      var current = config.shortcuts && config.shortcuts[SWITCH_COMMAND];
+      if (current === normalized) return;
+      return writeUserConfig(applyServiceSwitch(config, setting));
+    }).catch(function () {});
+  }
+
   function deliverSwitch(userConfig) {
     sendSwitch(userConfig).then(function (ok) {
       if (!ok) writeUserConfig(userConfig);
     });
     root.setTimeout(function () { sendSwitch(userConfig); }, 600);
-  }
-
-  function installShortcutHotkey() {
-    if (!inTopFrame() || isExtensionDocument()) return;
-    var cached = null;
-    var generation = 0;
-    var lastToggleAt = 0;
-    function remember(config) {
-      cached = { config: config, setting: shortcutSetting(config) };
-    }
-    function refresh() {
-      var ticket = ++generation;
-      return readUserConfig().then(function (config) {
-        if (ticket !== generation) return;
-        remember(config);
-      }).catch(function () {});
-    }
-    refresh();
-    root.setTimeout(refresh, 800);
-    var runtime = extensionRuntime();
-    var onChanged = runtime && runtime.storage && runtime.storage.onChanged;
-    if (onChanged && typeof onChanged.addListener === "function") {
-      onChanged.addListener(function (changes, area) {
-        if (area === "local" && changes && changes[USER_CONFIG_KEY]) refresh();
-      });
-    }
-    window.addEventListener("keydown", function (event) {
-      if (!cached || !cached.setting || !eventMatchesShortcut(event, cached.setting.shortcut)) return;
-      if (Date.now() - lastToggleAt < 400) return;
-      lastToggleAt = Date.now();
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
-      var config = cached.config;
-      loadCatalog(config).then(function (catalog) {
-        var setting = shortcutSetting(config);
-        if (!setting || !eventMatchesShortcut(event, setting.shortcut)) return;
-        var next = toggleActiveService(config, catalog);
-        if (!next) return;
-        generation += 1;
-        remember(next);
-        deliverSwitch(next);
-        showSwitchConfirmation(serviceDisplayName(activeServiceId(next), catalog));
-      }).catch(function () {});
-    }, true);
   }
 
   function fillSelect(select, catalog, selected, unsetLabel) {
@@ -656,7 +674,7 @@
         committedShortcut = serviceSwitch.shortcut || "";
         if (shortcutInput && !capturing) shortcutInput.value = committedShortcut;
         root.__imtForkHeldServiceSwitch = serviceSwitch;
-        var next = Object.assign({}, config, { serviceSwitch: serviceSwitch });
+        var next = applyServiceSwitch(config, serviceSwitch);
         mountedConfig = next;
         return writeUserConfig(next).then(function () {
           status.textContent = message || text.saved;
@@ -873,8 +891,9 @@
     installStoragePreserve();
     installSubscriptionRemoval();
     if (isOptionsDocument()) installShortcutSettings();
+    migrateSwitchCommand();
   } else {
     installSubscriptionRemoval();
-    installShortcutHotkey();
+    migrateSwitchCommand();
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);
